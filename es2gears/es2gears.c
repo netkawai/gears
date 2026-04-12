@@ -40,21 +40,43 @@
 
 #define _GNU_SOURCE
 
-#include <assert.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <GLES2/gl2.h>
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include "eglut.h"
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#include <Glut/glut.h>
+#else
+#include <GL/gl.h>
+#include <GL/glut.h>
+#endif
 
 #define STRIPS_PER_TOOTH 7
-#define VERTICES_PER_TOOTH 46
+#define VERTICES_PER_TOOTH 34
 #define GEAR_VERTEX_STRIDE 6
+
+#ifndef HAVE_BUILTIN_SINCOS
+#define sincos _sincos
+static void
+sincos (double a, double *s, double *c)
+{
+  *s = sin (a);
+  *c = cos (a);
+}
+#endif
+
+/**
+ * Struct describing the vertices in triangle strip
+ */
+struct vertex_strip {
+   /** The first vertex in the strip */
+   GLint first;
+   /** The number of consecutive vertices in the strip after the first */
+   GLint count;
+};
 
 /* Each vertex consist of GEAR_VERTEX_STRIDE GLfloat attributes */
 typedef GLfloat GearVertex[GEAR_VERTEX_STRIDE];
@@ -67,6 +89,10 @@ struct gear {
    GearVertex *vertices;
    /** The number of vertices comprising the gear */
    int nvertices;
+   /** The array of triangle strips comprising the gear */
+   struct vertex_strip *strips;
+   /** The number of triangle strips comprising the gear */
+   int nstrips;
    /** The Vertex Buffer Object holding the vertices in the graphics card */
    GLuint vbo;
 };
@@ -132,7 +158,7 @@ create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfloat width,
    struct gear *gear;
    double s[5], c[5];
    GLfloat normal[3];
-   int cur_strip_start = 0;
+   int cur_strip = 0;
    int i;
 
    /* Allocate memory for the gear */
@@ -147,13 +173,12 @@ create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfloat width,
 
    da = 2.0 * M_PI / teeth / 4.0;
 
-   /* the first tooth doesn't need the first strip-restart sequence */
-   assert(teeth > 0);
-   gear->nvertices = VERTICES_PER_TOOTH +
-                     (VERTICES_PER_TOOTH + 2) * (teeth - 1);
+   /* Allocate memory for the triangle strip information */
+   gear->nstrips = STRIPS_PER_TOOTH * teeth;
+   gear->strips = calloc(gear->nstrips, sizeof (*gear->strips));
 
    /* Allocate memory for the vertices */
-   gear->vertices = calloc(gear->nvertices, sizeof(*gear->vertices));
+   gear->vertices = calloc(VERTICES_PER_TOOTH * teeth, sizeof(*gear->vertices));
    v = gear->vertices;
 
    for (i = 0; i < teeth; i++) {
@@ -173,20 +198,13 @@ create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfloat width,
 #define  GEAR_VERT(v, point, sign) vert((v), p[(point)].x, p[(point)].y, (sign) * width * 0.5, normal)
 
 #define START_STRIP do { \
-   cur_strip_start = (v - gear->vertices); \
-   if (cur_strip_start) \
-      v += 2; \
+   gear->strips[cur_strip].first = v - gear->vertices; \
 } while(0);
 
-/* emit prev last vertex
-   emit first vertex */
 #define END_STRIP do { \
-   if (cur_strip_start) { \
-      memcpy(gear->vertices + cur_strip_start, \
-             gear->vertices + (cur_strip_start - 1), sizeof(GearVertex)); \
-      memcpy(gear->vertices + cur_strip_start + 1, \
-             gear->vertices + (cur_strip_start + 2), sizeof(GearVertex)); \
-   } \
+   int _tmp = (v - gear->vertices); \
+   gear->strips[cur_strip].count = _tmp - gear->strips[cur_strip].first; \
+   cur_strip++; \
 } while (0)
 
 #define QUAD_WITH_NORMAL(p1, p2) do { \
@@ -225,16 +243,21 @@ create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfloat width,
       v = GEAR_VERT(v, 6, +1);
       END_STRIP;
 
+      /* Inner face */
+      START_STRIP;
+      QUAD_WITH_NORMAL(4, 6);
+      END_STRIP;
+
       /* Back face */
       START_STRIP;
       SET_NORMAL(0, 0, -1.0);
-      v = GEAR_VERT(v, 0, -1);
-      v = GEAR_VERT(v, 1, -1);
-      v = GEAR_VERT(v, 2, -1);
-      v = GEAR_VERT(v, 3, -1);
-      v = GEAR_VERT(v, 4, -1);
-      v = GEAR_VERT(v, 5, -1);
       v = GEAR_VERT(v, 6, -1);
+      v = GEAR_VERT(v, 5, -1);
+      v = GEAR_VERT(v, 4, -1);
+      v = GEAR_VERT(v, 3, -1);
+      v = GEAR_VERT(v, 2, -1);
+      v = GEAR_VERT(v, 1, -1);
+      v = GEAR_VERT(v, 0, -1);
       END_STRIP;
 
       /* Outer face */
@@ -253,19 +276,9 @@ create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfloat width,
       START_STRIP;
       QUAD_WITH_NORMAL(5, 3);
       END_STRIP;
-
-      /* Inner face */
-      START_STRIP;
-      SET_NORMAL(-c[0], -s[0], 0);
-      v = GEAR_VERT(v, 4, -1);
-      v = GEAR_VERT(v, 4, 1);
-      SET_NORMAL(-c[4], -s[4], 0);
-      v = GEAR_VERT(v, 6, -1);
-      v = GEAR_VERT(v, 6, 1);
-      END_STRIP;
    }
 
-   assert(gear->nvertices == (v - gear->vertices));
+   gear->nvertices = (v - gear->vertices);
 
    /* Store the vertices in a vertex buffer object (VBO) */
    glGenBuffers(1, &gear->vbo);
@@ -408,33 +421,35 @@ invert(GLfloat *m)
 }
 
 /** 
- * Calculate a frustum projection transformation.
+ * Calculate a perspective projection transformation.
  * 
  * @param m the matrix to save the transformation in
- * @param l the left plane distance
- * @param r the right plane distance
- * @param b the bottom plane distance
- * @param t the top plane distance
- * @param n the near plane distance
- * @param f the far plane distance
+ * @param fovy the field of view in the y direction
+ * @param aspect the view aspect ratio
+ * @param zNear the near clipping plane
+ * @param zFar the far clipping plane
  */
-static void
-frustum(GLfloat *m, GLfloat l, GLfloat r, GLfloat b, GLfloat t, GLfloat n, GLfloat f)
+void perspective(GLfloat *m, GLfloat fovy, GLfloat aspect, GLfloat zNear, GLfloat zFar)
 {
    GLfloat tmp[16];
    identity(tmp);
 
-   GLfloat deltaX = r - l;
-   GLfloat deltaY = t - b;
-   GLfloat deltaZ = f - n;
+   double sine, cosine, cotangent, deltaZ;
+   GLfloat radians = fovy / 2 * M_PI / 180;
 
-   tmp[0] = (2 * n) / deltaX;
-   tmp[5] = (2 * n) / deltaY;
-   tmp[8] = (r + l) / deltaX;
-   tmp[9] = (t + b) / deltaY;
-   tmp[10] = -(f + n) / deltaZ;
+   deltaZ = zFar - zNear;
+   sincos(radians, &sine, &cosine);
+
+   if ((deltaZ == 0) || (sine == 0) || (aspect == 0))
+      return;
+
+   cotangent = cosine / sine;
+
+   tmp[0] = cotangent / aspect;
+   tmp[5] = cotangent;
+   tmp[10] = -(zFar + zNear) / deltaZ;
    tmp[11] = -1;
-   tmp[14] = -(2 * f * n) / deltaZ;
+   tmp[14] = -2 * zNear * zFar / deltaZ;
    tmp[15] = 0;
 
    memcpy(m, tmp, sizeof(tmp));
@@ -496,7 +511,9 @@ draw_gear(struct gear *gear, GLfloat *transform,
    glEnableVertexAttribArray(1);
 
    /* Draw the triangle strips that comprise the gear */
-   glDrawArrays(GL_TRIANGLE_STRIP, 0, gear->nvertices);
+   int n;
+   for (n = 0; n < gear->nstrips; n++)
+      glDrawArrays(GL_TRIANGLE_STRIP, gear->strips[n].first, gear->strips[n].count);
 
    /* Disable the attributes */
    glDisableVertexAttribArray(1);
@@ -519,7 +536,7 @@ gears_draw(void)
    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
    /* Translate and rotate the view */
-   translate(transform, 0, 0, -40);
+   translate(transform, 0, 0, -20);
    rotate(transform, 2 * M_PI * view_rot[0] / 360.0, 1, 0, 0);
    rotate(transform, 2 * M_PI * view_rot[1] / 360.0, 0, 1, 0);
    rotate(transform, 2 * M_PI * view_rot[2] / 360.0, 0, 0, 1);
@@ -528,6 +545,8 @@ gears_draw(void)
    draw_gear(gear1, transform, -3.0, -2.0, angle, red);
    draw_gear(gear2, transform, 3.1, -2.0, -2 * angle - 9.0, green);
    draw_gear(gear3, transform, -3.1, 4.2, -2 * angle - 25.0, blue);
+
+   glutSwapBuffers();
 }
 
 /** 
@@ -540,32 +559,31 @@ static void
 gears_reshape(int width, int height)
 {
    /* Update the projection matrix */
-   GLfloat h = (GLfloat)height / (GLfloat)width;
-   frustum(ProjectionMatrix, -1.0, 1.0, -h, h, 5.0, 60.0);
+   perspective(ProjectionMatrix, 60.0, width / (float)height, 1.0, 1024.0);
 
    /* Set the viewport */
    glViewport(0, 0, (GLint) width, (GLint) height);
 }
 
 /** 
- * Handles special eglut events.
+ * Handles special glut events.
  * 
  * @param special the event to handle.
  */
 static void
-gears_special(int special)
+gears_special(int special, int crap, int morecrap)
 {
    switch (special) {
-      case EGLUT_KEY_LEFT:
+      case GLUT_KEY_LEFT:
          view_rot[1] += 5.0;
          break;
-      case EGLUT_KEY_RIGHT:
+      case GLUT_KEY_RIGHT:
          view_rot[1] -= 5.0;
          break;
-      case EGLUT_KEY_UP:
+      case GLUT_KEY_UP:
          view_rot[0] += 5.0;
          break;
-      case EGLUT_KEY_DOWN:
+      case GLUT_KEY_DOWN:
          view_rot[0] -= 5.0;
          break;
    }
@@ -576,7 +594,7 @@ gears_idle(void)
 {
    static int frames = 0;
    static double tRot0 = -1.0, tRate0 = -1.0;
-   double dt, t = eglutGet(EGLUT_ELAPSED_TIME) / 1000.0;
+   double dt, t = glutGet(GLUT_ELAPSED_TIME) / 1000.0;
 
    if (tRot0 < 0.0)
       tRot0 = t;
@@ -588,7 +606,7 @@ gears_idle(void)
    if (angle > 3600.0)
       angle -= 3600.0;
 
-   eglutPostRedisplay();
+   glutPostRedisplay();
    frames++;
 
    if (tRate0 < 0.0)
@@ -622,19 +640,19 @@ static const char vertex_shader[] =
 "    // The LightSourcePosition is actually its direction for directional light\n"
 "    vec3 L = normalize(LightSourcePosition.xyz);\n"
 "\n"
-"    float diffuse = max(dot(N, L), 0.0);\n"
-"    float ambient = 0.2;\n"
-"\n"
 "    // Multiply the diffuse value by the vertex color (which is fixed in this case)\n"
 "    // to get the actual color that we will use to draw this vertex with\n"
-"    Color = (ambient + diffuse) * MaterialColor;\n"
+"    float diffuse = max(dot(N, L), 0.0);\n"
+"    Color = diffuse * MaterialColor;\n"
 "\n"
 "    // Transform the position to clip coordinates\n"
 "    gl_Position = ModelViewProjectionMatrix * vec4(position, 1.0);\n"
 "}";
 
 static const char fragment_shader[] =
+"#ifdef GL_ES\n"
 "precision mediump float;\n"
+"#endif\n"
 "varying vec4 Color;\n"
 "\n"
 "void main(void)\n"
@@ -701,22 +719,22 @@ int
 main(int argc, char *argv[])
 {
    /* Initialize the window */
-   eglutInitWindowSize(300, 300);
-   eglutInitAPIMask(EGLUT_OPENGL_ES2_BIT);
-   eglutInit(argc, argv);
+   glutInit(&argc, argv);
+   glutInitWindowSize(300, 300);
+   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
 
-   eglutCreateWindow("es2gears");
+   glutCreateWindow("es2gears");
 
-   /* Set up eglut callback functions */
-   eglutIdleFunc(gears_idle);
-   eglutReshapeFunc(gears_reshape);
-   eglutDisplayFunc(gears_draw);
-   eglutSpecialFunc(gears_special);
+   /* Set up glut callback functions */
+   glutIdleFunc (gears_idle);
+   glutReshapeFunc(gears_reshape);
+   glutDisplayFunc(gears_draw);
+   glutSpecialFunc(gears_special);
 
    /* Initialize the gears */
    gears_init();
 
-   eglutMainLoop();
+   glutMainLoop();
 
    return 0;
 }
