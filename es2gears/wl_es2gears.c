@@ -687,6 +687,9 @@ init_egl(struct display *display)
 
     display->egl.dpy = eglGetDisplay((EGLNativeDisplayType)display->display);
     eglInitialize(display->egl.dpy, &major, &minor);
+
+    printf("EGL_VERSION = %s\n", eglQueryString(display->egl.dpy, EGL_VERSION));
+
     eglBindAPI(EGL_OPENGL_ES_API);
     eglChooseConfig(display->egl.dpy, argb_cfg, &display->egl.conf, 1, &n);
     display->egl.ctx = eglCreateContext(display->egl.dpy, display->egl.conf, EGL_NO_CONTEXT, ctx_attribs);
