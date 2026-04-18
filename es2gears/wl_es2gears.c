@@ -44,6 +44,7 @@
 #include <string.h>
 #include <math.h>
 #include <sys/time.h>
+#include <unistd.h>
 #include <linux/input.h>
 
 #include <wayland-client.h>
