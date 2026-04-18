@@ -121,8 +121,11 @@ static const GLfloat LightSourcePosition[4] = { 5.0, 5.0, 10.0, 1.0};
  * @param s pointer to store sine
  * @param c pointer to store cosine
  */
-static void sincos(double a, double *s, double *c) {
-    *s = sin(a); *c = cos(a);
+static void
+sincos(double a, double *s, double *c)
+{
+    *s = sin(a);
+    *c = cos(a);
 }
 
 /**
@@ -130,7 +133,9 @@ static void sincos(double a, double *s, double *c) {
  *
  * @param m the matrix make an identity matrix
  */
-static void identity(GLfloat *m) {
+static void
+identity(GLfloat *m)
+{
     static const GLfloat t[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
     memcpy(m, t, sizeof(t));
 }
@@ -143,7 +148,9 @@ static void identity(GLfloat *m) {
  * @param m the first matrix to multiply
  * @param n the second matrix to multiply
  */
-static void multiply(GLfloat *m, const GLfloat *n) {
+static void
+multiply(GLfloat *m, const GLfloat *n)
+{
     GLfloat tmp[16];
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
@@ -164,7 +171,9 @@ static void multiply(GLfloat *m, const GLfloat *n) {
  * @param y the y component of the direction to rotate to
  * @param z the z component of the direction to rotate to
  */
-static void rotate(GLfloat *m, GLfloat angle, GLfloat x, GLfloat y, GLfloat z) {
+static void
+rotate(GLfloat *m, GLfloat angle, GLfloat x, GLfloat y, GLfloat z)
+{
     double s, c;
     sincos(angle, &s, &c);
     GLfloat r[16] = {
@@ -184,7 +193,9 @@ static void rotate(GLfloat *m, GLfloat angle, GLfloat x, GLfloat y, GLfloat z) {
  * @param y the y component of the direction to translate to
  * @param z the z component of the direction to translate to
  */
-static void translate(GLfloat *m, GLfloat x, GLfloat y, GLfloat z) {
+static void
+translate(GLfloat *m, GLfloat x, GLfloat y, GLfloat z)
+{
     GLfloat t[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  x, y, z, 1 };
     multiply(m, t);
 }
@@ -194,7 +205,9 @@ static void translate(GLfloat *m, GLfloat x, GLfloat y, GLfloat z) {
  *
  * @param m the matrix to transpose
  */
-static void transpose(GLfloat *m) {
+static void
+transpose(GLfloat *m)
+{
     GLfloat t[16] = { m[0],m[4],m[8],m[12], m[1],m[5],m[9],m[13], m[2],m[6],m[10],m[14], m[3],m[7],m[11],m[15] };
     memcpy(m, t, sizeof(t));
 }
@@ -204,7 +217,9 @@ static void transpose(GLfloat *m) {
  *
  * This function can currently handle only pure translation-rotation matrices.
  */
-static void invert(GLfloat *m) {
+static void
+invert(GLfloat *m)
+{
     GLfloat t[16]; identity(t);
     t[12] = -m[12]; t[13] = -m[13]; t[14] = -m[14];
     m[12] = m[13] = m[14] = 0;
@@ -221,7 +236,9 @@ static void invert(GLfloat *m) {
  * @param zNear the near clipping plane
  * @param zFar the far clipping plane
  */
-static void perspective(GLfloat *m, GLfloat fovy, GLfloat aspect, GLfloat zNear, GLfloat zFar) {
+static void
+perspective(GLfloat *m, GLfloat fovy, GLfloat aspect, GLfloat zNear, GLfloat zFar)
+{
     GLfloat tmp[16]; identity(tmp);
     double sine, cosine, cotangent, deltaZ;
     GLfloat radians = fovy / 2 * M_PI / 180;
@@ -248,8 +265,15 @@ static void perspective(GLfloat *m, GLfloat fovy, GLfloat aspect, GLfloat zNear,
  *
  * @return the pointer to the next vertex
  */
-static GearVertex *vert(GearVertex *v, GLfloat x, GLfloat y, GLfloat z, GLfloat n[3]) {
-   v[0][0] = x; v[0][1] = y; v[0][2] = z; v[0][3] = n[0]; v[0][4] = n[1]; v[0][5] = n[2];
+static GearVertex *
+vert(GearVertex *v, GLfloat x, GLfloat y, GLfloat z, GLfloat n[3])
+{
+   v[0][0] = x;
+   v[0][1] = y;
+   v[0][2] = z;
+   v[0][3] = n[0];
+   v[0][4] = n[1];
+   v[0][5] = n[2];
    return v + 1;
 }
 
@@ -271,7 +295,10 @@ static struct gear *create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfl
    double s[5], c[5];
    int cur_strip = 0;
 
-   r0 = inner_radius; r1 = outer_radius - tooth_depth / 2.0; r2 = outer_radius + tooth_depth / 2.0;
+   r0 = inner_radius;
+   r1 = outer_radius - tooth_depth / 2.0;
+   r2 = outer_radius + tooth_depth / 2.0;
+
    da = 2.0 * M_PI / teeth / 4.0;
    gear->nstrips = STRIPS_PER_TOOTH * teeth;
    gear->strips = calloc(gear->nstrips, sizeof (*gear->strips));
@@ -279,21 +306,104 @@ static struct gear *create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfl
    v = gear->vertices;
 
    for (int i = 0; i < teeth; i++) {
-      for(int j=0; j<5; j++) sincos(i * 2.0 * M_PI / teeth + da * j, &s[j], &c[j]);
-      struct { GLfloat x, y; } p[7] = { {r2*c[1], r2*s[1]}, {r2*c[2], r2*s[2]}, {r1*c[0], r1*s[0]}, {r1*c[3], r1*s[3]}, {r0*c[0], r0*s[0]}, {r1*c[4], r1*s[4]}, {r0*c[4], r0*s[4]} };
+      for (int j = 0; j < 5; j++)
+         sincos(i * 2.0 * M_PI / teeth + da * j, &s[j], &c[j]);
 
-      #define START_STRIP gear->strips[cur_strip].first = v - gear->vertices
-      #define END_STRIP gear->strips[cur_strip].count = (v - gear->vertices) - gear->strips[cur_strip].first; cur_strip++
-      #define SET_NORM(x,y,z) normal[0]=x; normal[1]=y; normal[2]=z
-      #define V(idx, sign) v = vert(v, p[idx].x, p[idx].y, sign * width * 0.5, normal)
+      struct { GLfloat x, y; } p[7] = {
+         {r2 * c[1], r2 * s[1]},
+         {r2 * c[2], r2 * s[2]},
+         {r1 * c[0], r1 * s[0]},
+         {r1 * c[3], r1 * s[3]},
+         {r0 * c[0], r0 * s[0]},
+         {r1 * c[4], r1 * s[4]},
+         {r0 * c[4], r0 * s[4]}
+      };
 
-      START_STRIP; SET_NORM(0,0,1); V(0,1);V(1,1);V(2,1);V(3,1);V(4,1);V(5,1);V(6,1); END_STRIP;
-      START_STRIP; SET_NORM(p[4].y-p[6].y, -(p[4].x-p[6].x), 0); V(4,-1);V(4,1);V(6,-1);V(6,1); END_STRIP;
-      START_STRIP; SET_NORM(0,0,-1); V(6,-1);V(5,-1);V(4,-1);V(3,-1);V(2,-1);V(1,-1);V(0,-1); END_STRIP;
-      START_STRIP; SET_NORM(p[0].y-p[2].y, -(p[0].x-p[2].x), 0); V(0,-1);V(0,1);V(2,-1);V(2,1); END_STRIP;
-      START_STRIP; SET_NORM(p[1].y-p[0].y, -(p[1].x-p[0].x), 0); V(1,-1);V(1,1);V(0,-1);V(0,1); END_STRIP;
-      START_STRIP; SET_NORM(p[3].y-p[1].y, -(p[3].x-p[1].x), 0); V(3,-1);V(3,1);V(1,-1);V(1,1); END_STRIP;
-      START_STRIP; SET_NORM(p[5].y-p[3].y, -(p[5].x-p[3].x), 0); V(5,-1);V(5,1);V(3,-1);V(3,1); END_STRIP;
+      #define START_STRIP \
+         gear->strips[cur_strip].first = v - gear->vertices
+
+      #define END_STRIP \
+         do { \
+            int _tmp = (v - gear->vertices); \
+            gear->strips[cur_strip].count = _tmp - gear->strips[cur_strip].first; \
+            cur_strip++; \
+         } while (0)
+
+      #define SET_NORM(x, y, z) \
+         do { \
+            normal[0] = (x); \
+            normal[1] = (y); \
+            normal[2] = (z); \
+         } while (0)
+
+      #define V(idx, sign) \
+         v = vert(v, p[idx].x, p[idx].y, (sign) * width * 0.5, normal)
+
+      /* Front face */
+      START_STRIP;
+      SET_NORM(0, 0, 1.0);
+      V(0, 1);
+      V(1, 1);
+      V(2, 1);
+      V(3, 1);
+      V(4, 1);
+      V(5, 1);
+      V(6, 1);
+      END_STRIP;
+
+      /* Inner face */
+      START_STRIP;
+      SET_NORM(p[4].y - p[6].y, -(p[4].x - p[6].x), 0);
+      V(4, -1);
+      V(4, 1);
+      V(6, -1);
+      V(6, 1);
+      END_STRIP;
+
+      /* Back face */
+      START_STRIP;
+      SET_NORM(0, 0, -1.0);
+      V(6, -1);
+      V(5, -1);
+      V(4, -1);
+      V(3, -1);
+      V(2, -1);
+      V(1, -1);
+      V(0, -1);
+      END_STRIP;
+
+      /* Outer face */
+      START_STRIP;
+      SET_NORM(p[0].y - p[2].y, -(p[0].x - p[2].x), 0);
+      V(0, -1);
+      V(0, 1);
+      V(2, -1);
+      V(2, 1);
+      END_STRIP;
+
+      START_STRIP;
+      SET_NORM(p[1].y - p[0].y, -(p[1].x - p[0].x), 0);
+      V(1, -1);
+      V(1, 1);
+      V(0, -1);
+      V(0, 1);
+      END_STRIP;
+
+      START_STRIP;
+      SET_NORM(p[3].y - p[1].y, -(p[3].x - p[1].x), 0);
+      V(3, -1);
+      V(3, 1);
+      V(1, -1);
+      V(1, 1);
+      END_STRIP;
+
+      START_STRIP;
+      SET_NORM(p[5].y - p[3].y, -(p[5].x - p[3].x), 0);
+      V(5, -1);
+      V(5, 1);
+      V(3, -1);
+      V(3, 1);
+      END_STRIP;
    }
    gear->nvertices = (v - gear->vertices);
    glGenBuffers(1, &gear->vbo);
@@ -314,7 +424,9 @@ static struct gear *create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfl
  * @param angle the rotation angle of the gear
  * @param color the color of the gear
  */
-static void draw_gear(struct gear *gear, GLfloat *transform, GLfloat x, GLfloat y, GLfloat angle, const GLfloat color[4]) {
+static void
+draw_gear(struct gear *gear, GLfloat *transform, GLfloat x, GLfloat y, GLfloat angle, const GLfloat color[4])
+{
    GLfloat mv[16], nm[16], mvp[16];
    memcpy(mv, transform, sizeof(mv));
    translate(mv, x, y, 0);
@@ -322,13 +434,20 @@ static void draw_gear(struct gear *gear, GLfloat *transform, GLfloat x, GLfloat 
    memcpy(mvp, ProjectionMatrix, sizeof(mvp));
    multiply(mvp, mv);
    glUniformMatrix4fv(ModelViewProjectionMatrix_location, 1, GL_FALSE, mvp);
-   memcpy(nm, mv, sizeof(nm)); invert(nm); transpose(nm);
+
+   memcpy(nm, mv, sizeof(nm));
+   invert(nm);
+   transpose(nm);
    glUniformMatrix4fv(NormalMatrix_location, 1, GL_FALSE, nm);
+
    glUniform4fv(MaterialColor_location, 1, color);
    glBindBuffer(GL_ARRAY_BUFFER, gear->vbo);
    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), NULL);
    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLfloat *) 0 + 3);
-   glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
+
+   glEnableVertexAttribArray(0);
+   glEnableVertexAttribArray(1);
+
    for (int n = 0; n < gear->nstrips; n++)
       glDrawArrays(GL_TRIANGLE_STRIP, gear->strips[n].first, gear->strips[n].count);
 }
@@ -357,6 +476,7 @@ static void redraw(struct window *window) {
     eglSwapBuffers(window->display->egl.dpy, window->egl_surface);
 }
 
+
 /* --- Wayland / EGL Plumbing --- */
 
 /**
@@ -376,6 +496,7 @@ static void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_t
     }
 }
 
+
 /**
  * Handles xdg_toplevel close events.
  *
@@ -386,7 +507,10 @@ static void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_tople
     exit(0);
 }
 
-static const struct xdg_toplevel_listener xdg_toplevel_listener = { xdg_toplevel_handle_configure, xdg_toplevel_handle_close };
+static const struct xdg_toplevel_listener xdg_toplevel_listener = {
+   xdg_toplevel_handle_configure,
+   xdg_toplevel_handle_close
+};
 
 /**
  * Handles xdg_surface configure events.
@@ -399,12 +523,16 @@ static void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_sur
     struct window *window = data;
     xdg_surface_ack_configure(xdg_surface, serial);
     if (window->native) wl_egl_window_resize(window->native, window->width, window->height, 0, 0);
+
     glViewport(0, 0, window->width, window->height);
     perspective(ProjectionMatrix, 60.0, (float)window->width / (float)window->height, 1.0, 1024.0);
     window->configured = 1;
 }
 
-static const struct xdg_surface_listener xdg_surface_listener = { xdg_surface_handle_configure };
+static const struct xdg_surface_listener xdg_surface_listener = {
+   xdg_surface_handle_configure
+};
+
 
 /**
  * Responds to xdg_wm_base ping events.
@@ -417,7 +545,10 @@ static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32
     xdg_wm_base_pong(xdg_wm_base, serial);
 }
 
-static const struct xdg_wm_base_listener xdg_wm_base_listener = { xdg_wm_base_ping };
+static const struct xdg_wm_base_listener xdg_wm_base_listener = {
+   xdg_wm_base_ping
+};
+
 
 /**
  * Handles registry global events to bind necessary interfaces.
@@ -428,7 +559,9 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = { xdg_wm_base_pi
  * @param interface interface name
  * @param version interface version
  */
-static void registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, const char *interface, uint32_t version) {
+static void
+registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, const char *interface, uint32_t version)
+{
     struct display *d = data;
     if (strcmp(interface, "wl_compositor") == 0) d->compositor = wl_registry_bind(registry, id, &wl_compositor_interface, 1);
     else if (strcmp(interface, "xdg_wm_base") == 0) {
@@ -446,14 +579,20 @@ static void registry_handle_global(void *data, struct wl_registry *registry, uin
  */
 static void registry_handle_global_remove(void *data, struct wl_registry *registry, uint32_t id) {}
 
-static const struct wl_registry_listener registry_listener = { registry_handle_global, registry_handle_global_remove };
+static const struct wl_registry_listener registry_listener = {
+   registry_handle_global,
+   registry_handle_global_remove
+};
+
 
 /**
  * Initializes EGL and creates a context.
  *
  * @param display the display object
  */
-static void init_egl(struct display *display) {
+static void
+init_egl(struct display *display)
+{
     EGLint major, minor, n;
     static const EGLint argb_cfg[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RED_SIZE, 1, EGL_GREEN_SIZE, 1, EGL_BLUE_SIZE, 1, EGL_ALPHA_SIZE, 1, EGL_DEPTH_SIZE, 1, EGL_NONE };
     static const EGLint ctx_attribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
@@ -470,7 +609,9 @@ static void init_egl(struct display *display) {
  *
  * @param window the window object
  */
-static void create_window(struct window *window) {
+static void
+create_window(struct window *window)
+{
     window->surface = wl_compositor_create_surface(window->display->compositor);
     window->xdg_surface = xdg_wm_base_get_xdg_surface(window->display->xdg_wm_base, window->surface);
     xdg_surface_add_listener(window->xdg_surface, &xdg_surface_listener, window);
@@ -487,14 +628,65 @@ static void create_window(struct window *window) {
 /**
  * Initializes OpenGL ES 2 state, compiles shaders, and creates gears.
  */
-static void init_gl() {
-    const char *vertex_shader = "attribute vec3 position; attribute vec3 normal; uniform mat4 ModelViewProjectionMatrix; uniform mat4 NormalMatrix; uniform vec4 LightSourcePosition; uniform vec4 MaterialColor; varying vec4 Color; void main(void) { vec3 N = normalize(vec3(NormalMatrix * vec4(normal, 1.0))); vec3 L = normalize(LightSourcePosition.xyz); float diffuse = max(dot(N, L), 0.0); Color = diffuse * MaterialColor; gl_Position = ModelViewProjectionMatrix * vec4(position, 1.0); }";
-    const char *fragment_shader = "precision mediump float; varying vec4 Color; void main(void) { gl_FragColor = Color; }";
-    GLuint v = glCreateShader(GL_VERTEX_SHADER); glShaderSource(v, 1, &vertex_shader, NULL); glCompileShader(v);
-    GLuint f = glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(f, 1, &fragment_shader, NULL); glCompileShader(f);
-    GLuint prog = glCreateProgram(); glAttachShader(prog, v); glAttachShader(prog, f);
-    glBindAttribLocation(prog, 0, "position"); glBindAttribLocation(prog, 1, "normal");
-    glLinkProgram(prog); glUseProgram(prog);
+static void
+init_gl()
+{
+    const char *vertex_shader =
+"attribute vec3 position;\n"
+"attribute vec3 normal;\n"
+"\n"
+"uniform mat4 ModelViewProjectionMatrix;\n"
+"uniform mat4 NormalMatrix;\n"
+"uniform vec4 LightSourcePosition;\n"
+"uniform vec4 MaterialColor;\n"
+"\n"
+"varying vec4 Color;\n"
+"\n"
+"void main(void)\n"
+"{\n"
+"    // Transform the normal to eye coordinates\n"
+"    vec3 N = normalize(vec3(NormalMatrix * vec4(normal, 1.0)));\n"
+"\n"
+"    // The LightSourcePosition is actually its direction for directional light\n"
+"    vec3 L = normalize(LightSourcePosition.xyz);\n"
+"\n"
+"    // Multiply the diffuse value by the vertex color (which is fixed in this case)\n"
+"    // to get the actual color that we will use to draw this vertex with\n"
+"    float diffuse = max(dot(N, L), 0.0);\n"
+"    Color = diffuse * MaterialColor;\n"
+"\n"
+"    // Transform the position to clip coordinates\n"
+"    gl_Position = ModelViewProjectionMatrix * vec4(position, 1.0);\n"
+"}";
+
+    const char *fragment_shader =
+"#ifdef GL_ES\n"
+"precision mediump float;\n"
+"#endif\n"
+"varying vec4 Color;\n"
+"\n"
+"void main(void)\n"
+"{\n"
+"    gl_FragColor = Color;\n"
+"}";
+
+    GLuint v = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(v, 1, &vertex_shader, NULL);
+    glCompileShader(v);
+
+    GLuint f = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(f, 1, &fragment_shader, NULL);
+    glCompileShader(f);
+
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, v);
+    glAttachShader(prog, f);
+    glBindAttribLocation(prog, 0, "position");
+    glBindAttribLocation(prog, 1, "normal");
+
+    glLinkProgram(prog);
+    glUseProgram(prog);
+
     ModelViewProjectionMatrix_location = glGetUniformLocation(prog, "ModelViewProjectionMatrix");
     NormalMatrix_location = glGetUniformLocation(prog, "NormalMatrix");
     LightSourcePosition_location = glGetUniformLocation(prog, "LightSourcePosition");
@@ -513,7 +705,9 @@ static void init_gl() {
  * @param argv argument vector
  * @return exit status
  */
-int main(int argc, char **argv) {
+int
+main(int argc, char **argv)
+{
     struct display display = {0};
     struct window window = { .display = &display, .width = 300, .height = 300 };
 
@@ -526,24 +720,32 @@ int main(int argc, char **argv) {
     create_window(&window);
     init_gl();
 
-    struct timeval tv0; gettimeofday(&tv0, NULL);
-    double t0 = tv0.tv_sec + tv0.tv_usec / 1000000.0, t_last = t0;
+    struct timeval tv0;
+    gettimeofday(&tv0, NULL);
+    double t0 = tv0.tv_sec + tv0.tv_usec / 1000000.0;
+    double t_last = t0;
     int frames = 0;
 
     while (wl_display_dispatch(display.display) != -1) {
-        struct timeval tv; gettimeofday(&tv, NULL);
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
         double t = tv.tv_sec + tv.tv_usec / 1000000.0;
-        double dt = t - t_last; t_last = t;
+        double dt = t - t_last;
+        t_last = t;
 
         angle += 70.0 * dt;
-        if (angle > 3600.0) angle -= 3600.0;
+        if (angle > 3600.0)
+           angle -= 3600.0;
 
-        if (window.configured) redraw(&window);
+        if (window.configured)
+           redraw(&window);
 
         frames++;
         if (t - t0 >= 5.0) {
-            printf("%d frames in %.1f seconds = %.3f FPS\n", frames, t - t0, frames / (t - t0));
-            t0 = t; frames = 0;
+            GLfloat seconds = t - t0;
+            printf("%d frames in %.1f seconds = %.3f FPS\n", frames, seconds, frames / seconds);
+            t0 = t;
+            frames = 0;
         }
     }
 
