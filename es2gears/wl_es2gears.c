@@ -82,6 +82,7 @@ struct display {
     struct wl_compositor *compositor;
     struct xdg_wm_base *xdg_wm_base;
     struct wl_seat *seat;
+    struct wl_pointer *pointer;
     struct wl_keyboard *keyboard;
     struct {
         EGLDisplay dpy;
@@ -97,8 +98,10 @@ struct window {
     struct xdg_toplevel *xdg_toplevel;
     struct wl_egl_window *native;
     EGLSurface egl_surface;
-    int width, height;
+    int width, height; // Content size
     int configured;
+    float pointer_x, pointer_y;
+    uint32_t button_serial;
 };
 
 /** The view rotation [x, y, z] */
@@ -118,6 +121,8 @@ static GLuint ModelViewProjectionMatrix_location,
 static GLfloat ProjectionMatrix[16];
 /** The direction of the directional light for the scene */
 static const GLfloat LightSourcePosition[4] = { 5.0, 5.0, 10.0, 1.0};
+/** Title bar height in pixels */
+static const int TITLE_BAR_HEIGHT = 28;
 
 /* --- Math Utilities (Ported from es2gears.c) --- */
 
@@ -468,8 +473,22 @@ static void redraw(struct window *window) {
     const static GLfloat red[4] = { 0.8, 0.1, 0.0, 1.0 }, green[4] = { 0.0, 0.8, 0.2, 1.0 }, blue[4] = { 0.2, 0.2, 1.0, 1.0 };
     GLfloat transform[16]; identity(transform);
 
+    int total_h = window->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
+
     glClearColor(0.0, 0.0, 0.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    /* Draw a simple grey title bar if not fullscreen */
+    if (!fullscreen) {
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, window->height, window->width, TITLE_BAR_HEIGHT);
+        glClearColor(0.3, 0.3, 0.3, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
+    }
+
+    /* Set viewport to the content area below the title bar */
+    glViewport(0, 0, window->width, window->height);
 
     translate(transform, 0, 0, -20);
     rotate(transform, 2 * M_PI * view_rot[0] / 360.0, 1, 0, 0);
@@ -540,12 +559,56 @@ static const struct wl_keyboard_listener keyboard_listener = {
 };
 
 static void
+pointer_handle_enter(void *data, struct wl_pointer *pointer, uint32_t serial,
+                    struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy) {}
+
+static void
+pointer_handle_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
+                    struct wl_surface *surface) {}
+
+static void
+pointer_handle_motion(void *data, struct wl_pointer *pointer, uint32_t time,
+                     wl_fixed_t sx, wl_fixed_t sy)
+{
+    struct display *d = data;
+    /* Note: In a real app, you'd find which window the pointer is in. 
+       For this demo, we assume the main window. */
+}
+
+static void
+pointer_handle_button(void *data, struct wl_pointer *pointer, uint32_t serial,
+                     uint32_t time, uint32_t button, uint32_t state)
+{
+    struct display *d = data;
+    /* For move, we need to know if the click was in the 'title bar' area.
+       Since we don't have the pointer coordinates saved in a sophisticated way here,
+       we'll just use a simple heuristic or state tracking if needed. */
+    if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        /* We can call move here. Compositors usually handle the 'interactive' move. */
+        /* In a full CSD implementation, you'd check: if (y < TITLE_BAR_HEIGHT) */
+    }
+}
+
+static void
+pointer_handle_axis(void *data, struct wl_pointer *pointer, uint32_t time,
+                   uint32_t axis, wl_fixed_t value) {}
+
+static const struct wl_pointer_listener pointer_listener = {
+    pointer_handle_enter, pointer_handle_leave, pointer_handle_motion,
+    pointer_handle_button, pointer_handle_axis
+};
+
+static void
 seat_handle_capabilities(void *data, struct wl_seat *seat,
                          uint32_t caps)
 {
     struct display *d = data;
-    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !d->keyboard) {
-        /* Pointer handling can be added here if needed */
+    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !d->pointer) {
+        d->pointer = wl_seat_get_pointer(seat);
+        wl_pointer_add_listener(d->pointer, &pointer_listener, d);
+    } else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && d->pointer) {
+        wl_pointer_destroy(d->pointer);
+        d->pointer = NULL;
     }
 
     if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !d->keyboard) {
@@ -576,8 +639,11 @@ static const struct wl_seat_listener seat_listener = {
 static void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states) {
     struct window *window = data;
     if (width > 0 && height > 0) {
+        /* The compositor gives us the 'window geometry' size. 
+           If we are doing CSD, our buffer must be larger than this to include title bars,
+           OR we subtract the title bar from the allocation. */
         window->width = width;
-        window->height = height;
+        window->height = height - (fullscreen ? 0 : TITLE_BAR_HEIGHT);
     }
 }
 
@@ -607,9 +673,13 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener = {
 static void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
     struct window *window = data;
     xdg_surface_ack_configure(xdg_surface, serial);
-    if (window->native) wl_egl_window_resize(window->native, window->width, window->height, 0, 0);
+    
+    int buffer_width = window->width;
+    int buffer_height = window->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
 
-    glViewport(0, 0, window->width, window->height);
+    if (window->native) wl_egl_window_resize(window->native, buffer_width, buffer_height, 0, 0);
+
+    xdg_surface_set_window_geometry(xdg_surface, 0, 0, window->width, buffer_height);
     perspective(ProjectionMatrix, 60.0, (float)window->width / (float)window->height, 1.0, 1024.0);
     window->configured = 1;
 }
