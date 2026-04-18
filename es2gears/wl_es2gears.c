@@ -84,6 +84,7 @@ struct display {
     struct wl_seat *seat;
     struct wl_pointer *pointer;
     struct wl_keyboard *keyboard;
+    struct window *window;
     struct {
         EGLDisplay dpy;
         EGLContext ctx;
@@ -571,8 +572,10 @@ pointer_handle_motion(void *data, struct wl_pointer *pointer, uint32_t time,
                      wl_fixed_t sx, wl_fixed_t sy)
 {
     struct display *d = data;
-    /* Note: In a real app, you'd find which window the pointer is in. 
-       For this demo, we assume the main window. */
+    if (d->window) {
+        d->window->pointer_x = wl_fixed_to_double(sx);
+        d->window->pointer_y = wl_fixed_to_double(sy);
+    }
 }
 
 static void
@@ -580,12 +583,32 @@ pointer_handle_button(void *data, struct wl_pointer *pointer, uint32_t serial,
                      uint32_t time, uint32_t button, uint32_t state)
 {
     struct display *d = data;
-    /* For move, we need to know if the click was in the 'title bar' area.
-       Since we don't have the pointer coordinates saved in a sophisticated way here,
-       we'll just use a simple heuristic or state tracking if needed. */
+    struct window *w = d->window;
+
+    if (!w)
+        return;
+
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        /* We can call move here. Compositors usually handle the 'interactive' move. */
-        /* In a full CSD implementation, you'd check: if (y < TITLE_BAR_HEIGHT) */
+        uint32_t edges = 0;
+        int margin = 8;
+        int b_width = w->width;
+        int b_height = w->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
+
+        if (w->pointer_y < margin)
+           edges |= XDG_TOPLEVEL_RESIZE_EDGE_TOP;
+        else if (w->pointer_y > b_height - margin)
+           edges |= XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM;
+
+        if (w->pointer_x < margin)
+           edges |= XDG_TOPLEVEL_RESIZE_EDGE_LEFT;
+        else if (w->pointer_x > b_width - margin)
+           edges |= XDG_TOPLEVEL_RESIZE_EDGE_RIGHT;
+
+        if (edges != 0) {
+           xdg_toplevel_resize(w->xdg_toplevel, d->seat, serial, edges);
+        } else if (!fullscreen && w->pointer_y < TITLE_BAR_HEIGHT) {
+           xdg_toplevel_move(w->xdg_toplevel, d->seat, serial);
+        }
     }
 }
 
@@ -913,6 +936,8 @@ main(int argc, char **argv)
         fprintf(stderr, "failed to connect to Wayland display\n");
         return -1;
     }
+    display.window = &window;
+
     display.registry = wl_display_get_registry(display.display);
     wl_registry_add_listener(display.registry, &registry_listener, &display);
     wl_display_roundtrip(display.display);
