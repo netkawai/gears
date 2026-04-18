@@ -44,10 +44,12 @@
 #include <string.h>
 #include <math.h>
 #include <sys/time.h>
+#include <linux/input.h>
 
 #include <wayland-client.h>
 #include <wayland-egl.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <GLES2/gl2.h>
 
 #include "xdg-shell-protocol.h"
@@ -78,6 +80,8 @@ struct display {
     struct wl_registry *registry;
     struct wl_compositor *compositor;
     struct xdg_wm_base *xdg_wm_base;
+    struct wl_seat *seat;
+    struct wl_keyboard *keyboard;
     struct {
         EGLDisplay dpy;
         EGLContext ctx;
@@ -98,6 +102,8 @@ struct window {
 
 /** The view rotation [x, y, z] */
 static GLfloat view_rot[3] = { 20.0, 30.0, 0.0 };
+static int fullscreen = 0;
+static int print_info = 0;
 /** The gears */
 static struct gear *gear1, *gear2, *gear3;
 /** The current gear rotation angle */
@@ -479,6 +485,84 @@ static void redraw(struct window *window) {
 
 /* --- Wayland / EGL Plumbing --- */
 
+static void
+keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard,
+                      uint32_t format, int fd, uint32_t size)
+{
+    close(fd);
+}
+
+static void
+keyboard_handle_enter(void *data, struct wl_keyboard *keyboard,
+                      uint32_t serial, struct wl_surface *surface,
+                      struct wl_array *keys) {}
+
+static void
+keyboard_handle_leave(void *data, struct wl_keyboard *keyboard,
+                      uint32_t serial, struct wl_surface *surface) {}
+
+static void
+keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
+                    uint32_t serial, uint32_t time, uint32_t key,
+                    uint32_t state)
+{
+    if (state != WL_KEYBOARD_KEY_STATE_PRESSED) return;
+
+    switch (key) {
+        case KEY_Q:
+            exit(0);
+            break;
+        case KEY_LEFT:
+            view_rot[1] += 5.0;
+            break;
+        case KEY_RIGHT:
+            view_rot[1] -= 5.0;
+            break;
+        case KEY_UP:
+            view_rot[0] += 5.0;
+            break;
+        case KEY_DOWN:
+            view_rot[0] -= 5.0;
+            break;
+    }
+}
+
+static void
+keyboard_handle_modifiers(void *data, struct wl_keyboard *keyboard,
+                          uint32_t serial, uint32_t mods_depressed,
+                          uint32_t mods_latched, uint32_t mods_locked,
+                          uint32_t group) {}
+
+static const struct wl_keyboard_listener keyboard_listener = {
+    keyboard_handle_keymap, keyboard_handle_enter, keyboard_handle_leave,
+    keyboard_handle_key, keyboard_handle_modifiers
+};
+
+static void
+seat_handle_capabilities(void *data, struct wl_seat *seat,
+                         uint32_t caps)
+{
+    struct display *d = data;
+    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !d->keyboard) {
+        /* Pointer handling can be added here if needed */
+    }
+
+    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !d->keyboard) {
+        d->keyboard = wl_seat_get_keyboard(seat);
+        wl_keyboard_add_listener(d->keyboard, &keyboard_listener, d);
+    } else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && d->keyboard) {
+        wl_keyboard_destroy(d->keyboard);
+        d->keyboard = NULL;
+    }
+}
+
+static void
+seat_handle_name(void *data, struct wl_seat *seat, const char *name) {}
+
+static const struct wl_seat_listener seat_listener = {
+    seat_handle_capabilities, seat_handle_name
+};
+
 /**
  * Handles xdg_toplevel configure events.
  *
@@ -568,6 +652,10 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, co
         d->xdg_wm_base = wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
         xdg_wm_base_add_listener(d->xdg_wm_base, &xdg_wm_base_listener, d);
     }
+    else if (strcmp(interface, "wl_seat") == 0) {
+        d->seat = wl_registry_bind(registry, id, &wl_seat_interface, 1);
+        wl_seat_add_listener(d->seat, &seat_listener, d);
+    }
 }
 
 /**
@@ -618,6 +706,7 @@ create_window(struct window *window)
     window->xdg_toplevel = xdg_surface_get_toplevel(window->xdg_surface);
     xdg_toplevel_add_listener(window->xdg_toplevel, &xdg_toplevel_listener, window);
     xdg_toplevel_set_title(window->xdg_toplevel, "Wayland EGL Gears");
+    if (fullscreen) xdg_toplevel_set_fullscreen(window->xdg_toplevel, NULL);
     wl_surface_commit(window->surface);
 
     window->native = wl_egl_window_create(window->surface, window->width, window->height);
@@ -687,6 +776,12 @@ init_gl()
     glLinkProgram(prog);
     glUseProgram(prog);
 
+    if (print_info) {
+        printf("GL_RENDERER   = %s\n", (char *) glGetString(GL_RENDERER));
+        printf("GL_VERSION    = %s\n", (char *) glGetString(GL_VERSION));
+        printf("GL_VENDOR     = %s\n", (char *) glGetString(GL_VENDOR));
+    }
+
     ModelViewProjectionMatrix_location = glGetUniformLocation(prog, "ModelViewProjectionMatrix");
     NormalMatrix_location = glGetUniformLocation(prog, "NormalMatrix");
     LightSourcePosition_location = glGetUniformLocation(prog, "LightSourcePosition");
@@ -696,6 +791,17 @@ init_gl()
     gear1 = create_gear(1.0, 4.0, 1.0, 20, 0.7);
     gear2 = create_gear(0.5, 2.0, 2.0, 10, 0.7);
     gear3 = create_gear(1.3, 2.0, 0.5, 10, 0.7);
+}
+
+static void
+usage(const char *name)
+{
+    printf("Usage: %s [options]\n", name);
+    printf("Options:\n");
+    printf("  -wayland <name>  Wayland display name\n");
+    printf("  -info            Show OpenGL info\n");
+    printf("  -fullscreen      Run in fullscreen mode\n");
+    printf("  --help           Show this help\n");
 }
 
 /**
@@ -710,8 +816,29 @@ main(int argc, char **argv)
 {
     struct display display = {0};
     struct window window = { .display = &display, .width = 300, .height = 300 };
+    char *wayland_name = NULL;
 
-    display.display = wl_display_connect(NULL);
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-wayland") == 0 && i + 1 < argc) {
+            wayland_name = argv[++i];
+        } else if (strcmp(argv[i], "-info") == 0) {
+            print_info = 1;
+        } else if (strcmp(argv[i], "-fullscreen") == 0) {
+            fullscreen = 1;
+        } else if (strcmp(argv[i], "--help") == 0) {
+            usage(argv[0]);
+            return 0;
+        } else {
+            usage(argv[0]);
+            return -1;
+        }
+    }
+
+    display.display = wl_display_connect(wayland_name);
+    if (display.display == NULL) {
+        fprintf(stderr, "failed to connect to Wayland display\n");
+        return -1;
+    }
     display.registry = wl_display_get_registry(display.display);
     wl_registry_add_listener(display.registry, &registry_listener, &display);
     wl_display_roundtrip(display.display);
