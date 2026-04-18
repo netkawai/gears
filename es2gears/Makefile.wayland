@@ -1,0 +1,24 @@
+CC = gcc
+CFLAGS = -O3 -Wall
+LIBS = $(shell pkg-config --cflags --libs wayland-client wayland-egl egl glesv2) -lm
+
+WAYLAND_PROTOCOLS_DIR = $(shell pkg-config --variable=pkgdatadir wayland-protocols)
+WAYLAND_SCANNER = $(shell pkg-config --variable=wayland_scanner wayland-scanner)
+
+XDG_SHELL_XML = $(WAYLAND_PROTOCOLS_DIR)/stable/xdg-shell/xdg-shell.xml
+
+all: wl_es2gears
+
+xdg-shell-protocol.c: $(XDG_SHELL_XML)
+	$(WAYLAND_SCANNER) private-code $< $@
+
+xdg-shell-protocol.h: $(XDG_SHELL_XML)
+	$(WAYLAND_SCANNER) client-header $< $@
+
+wl_es2gears: wl_es2gears.c xdg-shell-protocol.c xdg-shell-protocol.h
+	$(CC) $(CFLAGS) -I. -o $@ wl_es2gears.c xdg-shell-protocol.c $(LIBS)
+
+clean:
+	rm -f wl_es2gears xdg-shell-protocol.c xdg-shell-protocol.h
+
+.PHONY: all clean

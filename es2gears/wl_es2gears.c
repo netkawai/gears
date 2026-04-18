@@ -1,0 +1,383 @@
+/*
+ * Copyright (C) 1999-2001  Brian Paul   All Rights Reserved.
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * BRIAN PAUL BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ * AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/*
+ * Ported to GLES2.
+ * Kristian Høgsberg <krh@bitplanet.net>
+ * May 3, 2010
+ * 
+ * Improve GLES2 port:
+ *   * Refactor gear drawing.
+ *   * Use correct normals for surfaces.
+ *   * Improve shader.
+ *   * Use perspective projection transformation.
+ *   * Add FPS count.
+ *   * Add comments.
+ * Alexandros Frantzis <alexandros.frantzis@linaro.org>
+ * Jul 13, 2010
+ */
+/* 
+  Gemini3 generated code to port
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <sys/time.h>
+
+#include <wayland-client.h>
+#include <wayland-egl.h>
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
+
+#include "xdg-shell-protocol.h"
+
+/* Ported math/rendering structures from es2gears.c */
+#define STRIPS_PER_TOOTH 7
+#define VERTICES_PER_TOOTH 34
+#define GEAR_VERTEX_STRIDE 6
+
+struct vertex_strip {
+   GLint first;
+   GLint count;
+};
+
+typedef GLfloat GearVertex[GEAR_VERTEX_STRIDE];
+
+struct gear {
+   GearVertex *vertices;
+   int nvertices;
+   struct vertex_strip *strips;
+   int nstrips;
+   GLuint vbo;
+};
+
+/* Wayland and EGL state */
+struct display {
+    struct wl_display *display;
+    struct wl_registry *registry;
+    struct wl_compositor *compositor;
+    struct xdg_wm_base *xdg_wm_base;
+    struct {
+        EGLDisplay dpy;
+        EGLContext ctx;
+        EGLConfig conf;
+    } egl;
+};
+
+struct window {
+    struct display *display;
+    struct wl_surface *surface;
+    struct xdg_surface *xdg_surface;
+    struct xdg_toplevel *xdg_toplevel;
+    struct wl_egl_window *native;
+    EGLSurface egl_surface;
+    int width, height;
+    int configured;
+};
+
+static GLfloat view_rot[3] = { 20.0, 30.0, 0.0 };
+static struct gear *gear1, *gear2, *gear3;
+static GLfloat angle = 0.0;
+static GLuint ModelViewProjectionMatrix_location, NormalMatrix_location, LightSourcePosition_location, MaterialColor_location;
+static GLfloat ProjectionMatrix[16];
+static const GLfloat LightSourcePosition[4] = { 5.0, 5.0, 10.0, 1.0};
+
+/* --- Math Utilities (Ported from es2gears.c) --- */
+
+static void sincos(double a, double *s, double *c) {
+    *s = sin(a); *c = cos(a);
+}
+
+static void identity(GLfloat *m) {
+    static const GLfloat t[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+    memcpy(m, t, sizeof(t));
+}
+
+static void multiply(GLfloat *m, const GLfloat *n) {
+    GLfloat tmp[16];
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            tmp[i * 4 + j] = 0.0;
+            for (int k = 0; k < 4; k++)
+                tmp[i * 4 + j] += n[i * 4 + k] * m[k * 4 + j];
+        }
+    }
+    memcpy(m, tmp, sizeof(tmp));
+}
+
+static void rotate(GLfloat *m, GLfloat angle, GLfloat x, GLfloat y, GLfloat z) {
+    double s, c;
+    sincos(angle, &s, &c);
+    GLfloat r[16] = {
+        x * x * (1 - c) + c,     y * x * (1 - c) + z * s, x * z * (1 - c) - y * s, 0,
+        x * y * (1 - c) - z * s, y * y * (1 - c) + c,     y * z * (1 - c) + x * s, 0,
+        x * z * (1 - c) + y * s, y * z * (1 - c) - x * s, z * z * (1 - c) + c,     0,
+        0, 0, 0, 1
+    };
+    multiply(m, r);
+}
+
+static void translate(GLfloat *m, GLfloat x, GLfloat y, GLfloat z) {
+    GLfloat t[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  x, y, z, 1 };
+    multiply(m, t);
+}
+
+static void transpose(GLfloat *m) {
+    GLfloat t[16] = { m[0],m[4],m[8],m[12], m[1],m[5],m[9],m[13], m[2],m[6],m[10],m[14], m[3],m[7],m[11],m[15] };
+    memcpy(m, t, sizeof(t));
+}
+
+static void invert(GLfloat *m) {
+    GLfloat t[16]; identity(t);
+    t[12] = -m[12]; t[13] = -m[13]; t[14] = -m[14];
+    m[12] = m[13] = m[14] = 0;
+    transpose(m);
+    multiply(m, t);
+}
+
+static void perspective(GLfloat *m, GLfloat fovy, GLfloat aspect, GLfloat zNear, GLfloat zFar) {
+    GLfloat tmp[16]; identity(tmp);
+    double sine, cosine, cotangent, deltaZ;
+    GLfloat radians = fovy / 2 * M_PI / 180;
+    deltaZ = zFar - zNear;
+    sincos(radians, &sine, &cosine);
+    if (deltaZ == 0 || sine == 0 || aspect == 0) return;
+    cotangent = cosine / sine;
+    tmp[0] = cotangent / aspect; tmp[5] = cotangent;
+    tmp[10] = -(zFar + zNear) / deltaZ; tmp[11] = -1;
+    tmp[14] = -2 * zNear * zFar / deltaZ; tmp[15] = 0;
+    memcpy(m, tmp, sizeof(tmp));
+}
+
+/* --- Gear Generation (Ported from es2gears.c) --- */
+
+static GearVertex *vert(GearVertex *v, GLfloat x, GLfloat y, GLfloat z, GLfloat n[3]) {
+   v[0][0] = x; v[0][1] = y; v[0][2] = z; v[0][3] = n[0]; v[0][4] = n[1]; v[0][5] = n[2];
+   return v + 1;
+}
+
+static struct gear *create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfloat width, GLint teeth, GLfloat tooth_depth) {
+   GLfloat r0, r1, r2, da, normal[3];
+   GearVertex *v;
+   struct gear *gear = malloc(sizeof *gear);
+   double s[5], c[5];
+   int cur_strip = 0;
+
+   r0 = inner_radius; r1 = outer_radius - tooth_depth / 2.0; r2 = outer_radius + tooth_depth / 2.0;
+   da = 2.0 * M_PI / teeth / 4.0;
+   gear->nstrips = STRIPS_PER_TOOTH * teeth;
+   gear->strips = calloc(gear->nstrips, sizeof (*gear->strips));
+   gear->vertices = calloc(VERTICES_PER_TOOTH * teeth, sizeof(*gear->vertices));
+   v = gear->vertices;
+
+   for (int i = 0; i < teeth; i++) {
+      for(int j=0; j<5; j++) sincos(i * 2.0 * M_PI / teeth + da * j, &s[j], &c[j]);
+      struct { GLfloat x, y; } p[7] = { {r2*c[1], r2*s[1]}, {r2*c[2], r2*s[2]}, {r1*c[0], r1*s[0]}, {r1*c[3], r1*s[3]}, {r0*c[0], r0*s[0]}, {r1*c[4], r1*s[4]}, {r0*c[4], r0*s[4]} };
+
+      #define START_STRIP gear->strips[cur_strip].first = v - gear->vertices
+      #define END_STRIP gear->strips[cur_strip].count = (v - gear->vertices) - gear->strips[cur_strip].first; cur_strip++
+      #define SET_NORM(x,y,z) normal[0]=x; normal[1]=y; normal[2]=z
+      #define V(idx, sign) v = vert(v, p[idx].x, p[idx].y, sign * width * 0.5, normal)
+
+      START_STRIP; SET_NORM(0,0,1); V(0,1);V(1,1);V(2,1);V(3,1);V(4,1);V(5,1);V(6,1); END_STRIP;
+      START_STRIP; SET_NORM(p[4].y-p[6].y, -(p[4].x-p[6].x), 0); V(4,-1);V(4,1);V(6,-1);V(6,1); END_STRIP;
+      START_STRIP; SET_NORM(0,0,-1); V(6,-1);V(5,-1);V(4,-1);V(3,-1);V(2,-1);V(1,-1);V(0,-1); END_STRIP;
+      START_STRIP; SET_NORM(p[0].y-p[2].y, -(p[0].x-p[2].x), 0); V(0,-1);V(0,1);V(2,-1);V(2,1); END_STRIP;
+      START_STRIP; SET_NORM(p[1].y-p[0].y, -(p[1].x-p[0].x), 0); V(1,-1);V(1,1);V(0,-1);V(0,1); END_STRIP;
+      START_STRIP; SET_NORM(p[3].y-p[1].y, -(p[3].x-p[1].x), 0); V(3,-1);V(3,1);V(1,-1);V(1,1); END_STRIP;
+      START_STRIP; SET_NORM(p[5].y-p[3].y, -(p[5].x-p[3].x), 0); V(5,-1);V(5,1);V(3,-1);V(3,1); END_STRIP;
+   }
+   gear->nvertices = (v - gear->vertices);
+   glGenBuffers(1, &gear->vbo);
+   glBindBuffer(GL_ARRAY_BUFFER, gear->vbo);
+   glBufferData(GL_ARRAY_BUFFER, gear->nvertices * sizeof(GearVertex), gear->vertices, GL_STATIC_DRAW);
+   return gear;
+}
+
+/* --- Rendering logic --- */
+
+static void draw_gear(struct gear *gear, GLfloat *transform, GLfloat x, GLfloat y, GLfloat angle, const GLfloat color[4]) {
+   GLfloat mv[16], nm[16], mvp[16];
+   memcpy(mv, transform, sizeof(mv));
+   translate(mv, x, y, 0);
+   rotate(mv, 2 * M_PI * angle / 360.0, 0, 0, 1);
+   memcpy(mvp, ProjectionMatrix, sizeof(mvp));
+   multiply(mvp, mv);
+   glUniformMatrix4fv(ModelViewProjectionMatrix_location, 1, GL_FALSE, mvp);
+   memcpy(nm, mv, sizeof(nm)); invert(nm); transpose(nm);
+   glUniformMatrix4fv(NormalMatrix_location, 1, GL_FALSE, nm);
+   glUniform4fv(MaterialColor_location, 1, color);
+   glBindBuffer(GL_ARRAY_BUFFER, gear->vbo);
+   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), NULL);
+   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLfloat *) 0 + 3);
+   glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
+   for (int n = 0; n < gear->nstrips; n++)
+      glDrawArrays(GL_TRIANGLE_STRIP, gear->strips[n].first, gear->strips[n].count);
+}
+
+static void redraw(struct window *window) {
+    const static GLfloat red[4] = { 0.8, 0.1, 0.0, 1.0 }, green[4] = { 0.0, 0.8, 0.2, 1.0 }, blue[4] = { 0.2, 0.2, 1.0, 1.0 };
+    GLfloat transform[16]; identity(transform);
+
+    glClearColor(0.0, 0.0, 0.0, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    translate(transform, 0, 0, -20);
+    rotate(transform, 2 * M_PI * view_rot[0] / 360.0, 1, 0, 0);
+    rotate(transform, 2 * M_PI * view_rot[1] / 360.0, 0, 1, 0);
+    rotate(transform, 2 * M_PI * view_rot[2] / 360.0, 0, 0, 1);
+
+    draw_gear(gear1, transform, -3.0, -2.0, angle, red);
+    draw_gear(gear2, transform, 3.1, -2.0, -2 * angle - 9.0, green);
+    draw_gear(gear3, transform, -3.1, 4.2, -2 * angle - 25.0, blue);
+
+    eglSwapBuffers(window->display->egl.dpy, window->egl_surface);
+}
+
+/* --- Wayland / EGL Plumbing --- */
+
+static void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states) {
+    struct window *window = data;
+    if (width > 0 && height > 0) {
+        window->width = width;
+        window->height = height;
+    }
+}
+
+static void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel) {
+    exit(0);
+}
+
+static const struct xdg_toplevel_listener xdg_toplevel_listener = { xdg_toplevel_handle_configure, xdg_toplevel_handle_close };
+
+static void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
+    struct window *window = data;
+    xdg_surface_ack_configure(xdg_surface, serial);
+    if (window->native) wl_egl_window_resize(window->native, window->width, window->height, 0, 0);
+    glViewport(0, 0, window->width, window->height);
+    perspective(ProjectionMatrix, 60.0, (float)window->width / (float)window->height, 1.0, 1024.0);
+    window->configured = 1;
+}
+
+static const struct xdg_surface_listener xdg_surface_listener = { xdg_surface_handle_configure };
+
+static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
+    xdg_wm_base_pong(xdg_wm_base, serial);
+}
+
+static const struct xdg_wm_base_listener xdg_wm_base_listener = { xdg_wm_base_ping };
+
+static void registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, const char *interface, uint32_t version) {
+    struct display *d = data;
+    if (strcmp(interface, "wl_compositor") == 0) d->compositor = wl_registry_bind(registry, id, &wl_compositor_interface, 1);
+    else if (strcmp(interface, "xdg_wm_base") == 0) {
+        d->xdg_wm_base = wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
+        xdg_wm_base_add_listener(d->xdg_wm_base, &xdg_wm_base_listener, d);
+    }
+}
+
+static void registry_handle_global_remove(void *data, struct wl_registry *registry, uint32_t id) {}
+
+static const struct wl_registry_listener registry_listener = { registry_handle_global, registry_handle_global_remove };
+
+static void init_egl(struct display *display) {
+    EGLint major, minor, n;
+    static const EGLint argb_cfg[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RED_SIZE, 1, EGL_GREEN_SIZE, 1, EGL_BLUE_SIZE, 1, EGL_ALPHA_SIZE, 1, EGL_DEPTH_SIZE, 1, EGL_NONE };
+    static const EGLint ctx_attribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+
+    display->egl.dpy = eglGetDisplay((EGLNativeDisplayType)display->display);
+    eglInitialize(display->egl.dpy, &major, &minor);
+    eglBindAPI(EGL_OPENGL_ES_API);
+    eglChooseConfig(display->egl.dpy, argb_cfg, &display->egl.conf, 1, &n);
+    display->egl.ctx = eglCreateContext(display->egl.dpy, display->egl.conf, EGL_NO_CONTEXT, ctx_attribs);
+}
+
+static void create_window(struct window *window) {
+    window->surface = wl_compositor_create_surface(window->display->compositor);
+    window->xdg_surface = xdg_wm_base_get_xdg_surface(window->display->xdg_wm_base, window->surface);
+    xdg_surface_add_listener(window->xdg_surface, &xdg_surface_listener, window);
+    window->xdg_toplevel = xdg_surface_get_toplevel(window->xdg_surface);
+    xdg_toplevel_add_listener(window->xdg_toplevel, &xdg_toplevel_listener, window);
+    xdg_toplevel_set_title(window->xdg_toplevel, "Wayland EGL Gears");
+    wl_surface_commit(window->surface);
+
+    window->native = wl_egl_window_create(window->surface, window->width, window->height);
+    window->egl_surface = eglCreateWindowSurface(window->display->egl.dpy, window->display->egl.conf, (EGLNativeWindowType)window->native, NULL);
+    eglMakeCurrent(window->display->egl.dpy, window->egl_surface, window->egl_surface, window->display->egl.ctx);
+}
+
+static void init_gl() {
+    const char *vertex_shader = "attribute vec3 position; attribute vec3 normal; uniform mat4 ModelViewProjectionMatrix; uniform mat4 NormalMatrix; uniform vec4 LightSourcePosition; uniform vec4 MaterialColor; varying vec4 Color; void main(void) { vec3 N = normalize(vec3(NormalMatrix * vec4(normal, 1.0))); vec3 L = normalize(LightSourcePosition.xyz); float diffuse = max(dot(N, L), 0.0); Color = diffuse * MaterialColor; gl_Position = ModelViewProjectionMatrix * vec4(position, 1.0); }";
+    const char *fragment_shader = "precision mediump float; varying vec4 Color; void main(void) { gl_FragColor = Color; }";
+    GLuint v = glCreateShader(GL_VERTEX_SHADER); glShaderSource(v, 1, &vertex_shader, NULL); glCompileShader(v);
+    GLuint f = glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(f, 1, &fragment_shader, NULL); glCompileShader(f);
+    GLuint prog = glCreateProgram(); glAttachShader(prog, v); glAttachShader(prog, f);
+    glBindAttribLocation(prog, 0, "position"); glBindAttribLocation(prog, 1, "normal");
+    glLinkProgram(prog); glUseProgram(prog);
+    ModelViewProjectionMatrix_location = glGetUniformLocation(prog, "ModelViewProjectionMatrix");
+    NormalMatrix_location = glGetUniformLocation(prog, "NormalMatrix");
+    LightSourcePosition_location = glGetUniformLocation(prog, "LightSourcePosition");
+    MaterialColor_location = glGetUniformLocation(prog, "MaterialColor");
+    glUniform4fv(LightSourcePosition_location, 1, LightSourcePosition);
+    glEnable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST);
+    gear1 = create_gear(1.0, 4.0, 1.0, 20, 0.7);
+    gear2 = create_gear(0.5, 2.0, 2.0, 10, 0.7);
+    gear3 = create_gear(1.3, 2.0, 0.5, 10, 0.7);
+}
+
+int main(int argc, char **argv) {
+    struct display display = {0};
+    struct window window = { .display = &display, .width = 300, .height = 300 };
+
+    display.display = wl_display_connect(NULL);
+    display.registry = wl_display_get_registry(display.display);
+    wl_registry_add_listener(display.registry, &registry_listener, &display);
+    wl_display_roundtrip(display.display);
+
+    init_egl(&display);
+    create_window(&window);
+    init_gl();
+
+    struct timeval tv0; gettimeofday(&tv0, NULL);
+    double t0 = tv0.tv_sec + tv0.tv_usec / 1000000.0, t_last = t0;
+    int frames = 0;
+
+    while (wl_display_dispatch(display.display) != -1) {
+        struct timeval tv; gettimeofday(&tv, NULL);
+        double t = tv.tv_sec + tv.tv_usec / 1000000.0;
+        double dt = t - t_last; t_last = t;
+
+        angle += 70.0 * dt;
+        if (angle > 3600.0) angle -= 3600.0;
+
+        if (window.configured) redraw(&window);
+
+        frames++;
+        if (t - t0 >= 5.0) {
+            printf("%d frames in %.1f seconds = %.3f FPS\n", frames, t - t0, frames / (t - t0));
+            t0 = t; frames = 0;
+        }
+    }
+
+    return 0;
+}
