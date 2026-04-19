@@ -741,9 +741,12 @@ static void
 registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, const char *interface, uint32_t version)
 {
     struct display *d = data;
-    if (strcmp(interface, "wl_compositor") == 0) d->compositor = wl_registry_bind(registry, id, &wl_compositor_interface, 1);
+    if (strcmp(interface, "wl_compositor") == 0)  {
+        d->compositor = wl_registry_bind(registry, id, &wl_compositor_interface, 1); 
+    }
     else if (strcmp(interface, "xdg_wm_base") == 0) {
-        d->xdg_wm_base = wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
+        uint32_t use_version = (version >= 6) ? 6 : 1;
+        d->xdg_wm_base = wl_registry_bind(registry, id, &xdg_wm_base_interface, use_version);
         xdg_wm_base_add_listener(d->xdg_wm_base, &xdg_wm_base_listener, d);
     }
     else if (strcmp(interface, "wl_seat") == 0) {
