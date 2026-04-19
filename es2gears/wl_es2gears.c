@@ -447,10 +447,12 @@ static struct gear *create_gear(GLfloat inner_radius, GLfloat outer_radius, GLfl
 static char *
 find_font(const char *dir_path)
 {
-    DIR *dir = opendir(dir_path);
+    DIR *dir;
+    struct dirent *entry;
+    dir = opendir(dir_path);
     if (!dir) return NULL;
 
-    struct dirent *entry;
+    char *first_ttf = NULL;
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
 
@@ -462,12 +464,21 @@ find_font(const char *dir_path)
             char *found = find_font(path);
             if (found) {
                 closedir(dir);
+                if (first_ttf) free(first_ttf);
                 return found;
             }
-        } else if (strstr(entry->d_name, "Regular") && strstr(entry->d_name, ".ttf")) {
-            closedir(dir);
-            return strdup(path);
+        } else if (strstr(entry->d_name, ".ttf")) {
+            if (strstr(entry->d_name, "Regular")) {
+                closedir(dir);
+                if (first_ttf) free(first_ttf);
+                return strdup(path);
+            }
+            if (!first_ttf) first_ttf = strdup(path);
         }
+    }
+    if (first_ttf) {
+        closedir(dir);
+        return first_ttf;
     }
     closedir(dir);
     return NULL;
@@ -477,6 +488,8 @@ static void
 update_title_texture(struct window *window, const char *text)
 {
     char *font_path = find_font("/usr/share/fonts");
+    if (!font_path) font_path = find_font("/usr/local/share/fonts");
+    if (!font_path) font_path = find_font("/usr/share/X11/fonts");
     if (!font_path) return;
 
     printf("Font found: %s\n", font_path);
@@ -530,8 +543,10 @@ update_title_texture(struct window *window, const char *text)
 
     if (window->text_tex == 0) glGenTextures(1, &window->text_tex);
     glBindTexture(GL_TEXTURE_2D, window->text_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, tex_w, tex_h, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, bitmap);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     free(bitmap);
 
     /* Create simple shader for text */
@@ -576,6 +591,7 @@ draw_text(struct window *window)
     glUniform1i(glGetUniformLocation(window->text_prog, "s"), 0);
 
     glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     /* Viewport is set to TITLE_BAR_HEIGHT in redraw(), so NDC -1 to 1 is the bar */
@@ -583,11 +599,12 @@ draw_text(struct window *window)
     
     float x1 = -tw_ndc;
     float x2 = tw_ndc;
-    float y1 = 0.6f;
-    float y2 = -0.6f;
+    float y1 = 0.8f;
+    float y2 = -0.8f;
 
     float s_max = (float)window->text_width / 512.0f;
-    float verts[] = { x1,y1,0,1, x2,y1,s_max,1, x1,y2,0,0, x2,y2,s_max,0 };
+    /* Vertex order for CCW: Bottom-Left, Bottom-Right, Top-Left, Top-Right */
+    float verts[] = { x1, y2, 0, 1,  x2, y2, s_max, 1,  x1, y1, 0, 0,  x2, y1, s_max, 0 };
 
     /* CRITICAL: Unbind any VBOs from gear drawing so we can use client-side arrays */
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -595,6 +612,7 @@ draw_text(struct window *window)
     glEnableVertexAttribArray(0);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
 }
 
@@ -893,6 +911,7 @@ static void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_sur
     int buffer_height = window->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
 
     if (window->native) wl_egl_window_resize(window->native, buffer_width, buffer_height, 0, 0);
+    if (window->title_native) wl_egl_window_resize(window->title_native, buffer_width, TITLE_BAR_HEIGHT, 0, 0);
 
     xdg_surface_set_window_geometry(xdg_surface, 0, 0, window->width, buffer_height);
     perspective(ProjectionMatrix, 60.0, (float)window->width / (float)window->height, 1.0, 1024.0);
