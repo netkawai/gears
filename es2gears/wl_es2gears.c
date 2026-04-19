@@ -111,6 +111,7 @@ struct window {
     GLuint text_vbo;
     int width, height; // Content size
     int configured;
+    int text_width;
     float pointer_x, pointer_y;
     uint32_t button_serial;
 };
@@ -534,12 +535,17 @@ draw_text(struct window *window)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     float total_h = (float)(window->height + TITLE_BAR_HEIGHT);
-    float x1 = -0.98f; 
-    float y1 = 1.0f - (2.0f * 5.0f / total_h);
-    float x2 = 0.8f;
-    float y2 = 1.0f - (2.0f * (float)(TITLE_BAR_HEIGHT - 5) / total_h);
 
-    float verts[] = { x1,y1,0,1, x2,y1,1,1, x1,y2,0,0, x2,y2,1,0 };
+    float tw_ndc = (float)window->text_width / (float)window->width; 
+    float th_ndc = 16.0f / total_h; // Half-height in NDC units
+    
+    float x1 = -tw_ndc, x2 = tw_ndc;
+    float y_center = (window->height + (float)TITLE_BAR_HEIGHT / 2.0f) / total_h * 2.0f - 1.0f;
+    float y1 = y_center + th_ndc, y2 = y_center - th_ndc;
+
+    float s_max = (float)window->text_width / 512.0f;
+    float verts[] = { x1,y1,0,0, x2,y1,s_max,0, x1,y2,0,1, x2,y2,s_max,1 };
+
     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, verts);
     glEnableVertexAttribArray(0);
     glBindTexture(GL_TEXTURE_2D, window->text_tex);
@@ -597,6 +603,7 @@ static void redraw(struct window *window) {
 
     int total_h = window->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
 
+    glViewport(0, 0, window->width, total_h);
     glClearColor(0.0, 0.0, 0.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -607,9 +614,9 @@ static void redraw(struct window *window) {
         glClearColor(0.3, 0.3, 0.3, 1.0);
         glClear(GL_COLOR_BUFFER_BIT);
         glDisable(GL_SCISSOR_TEST);
-    }
 
-    draw_text(window);
+        draw_text(window);
+    }
 
     /* Set viewport to the content area below the title bar */
     glViewport(0, 0, window->width, window->height);
@@ -951,13 +958,13 @@ create_window(struct window *window)
     xdg_toplevel_add_listener(window->xdg_toplevel, &xdg_toplevel_listener, window);
     const char *title = "Wayland EGL Gears";
     xdg_toplevel_set_title(window->xdg_toplevel, title);
-    update_title_texture(window, title);
     if (fullscreen) xdg_toplevel_set_fullscreen(window->xdg_toplevel, NULL);
     wl_surface_commit(window->surface);
 
     window->native = wl_egl_window_create(window->surface, window->width, window->height);
     window->egl_surface = eglCreateWindowSurface(window->display->egl.dpy, window->display->egl.conf, (EGLNativeWindowType)window->native, NULL);
     eglMakeCurrent(window->display->egl.dpy, window->egl_surface, window->egl_surface, window->display->egl.ctx);
+    update_title_texture(window, title);
 }
 
 /**
