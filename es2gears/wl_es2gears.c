@@ -554,8 +554,6 @@ update_title_texture(struct window *window, const char *text)
         glAttachShader(window->text_prog, f);
         glBindAttribLocation(window->text_prog, 0, "p");
         glLinkProgram(window->text_prog);
-        glUseProgram(window->text_prog);
-        glUniform1i(glGetUniformLocation(window->text_prog, "s"), 0);
     }
 }
 
@@ -563,11 +561,16 @@ static void
 draw_text(struct window *window)
 {
     if (!window->text_tex) return;
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, window->text_tex);
+
     glUseProgram(window->text_prog);
+    glUniform1i(glGetUniformLocation(window->text_prog, "s"), 0);
+
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
     /* Viewport is set to TITLE_BAR_HEIGHT in redraw(), so NDC -1 to 1 is the bar */
     float tw_ndc = (float)window->text_width / (float)window->width;
     
@@ -579,9 +582,10 @@ draw_text(struct window *window)
     float s_max = (float)window->text_width / 512.0f;
     float verts[] = { x1,y1,0,0, x2,y1,s_max,0, x1,y2,0,1, x2,y2,s_max,1 };
 
+    /* CRITICAL: Unbind any VBOs from gear drawing so we can use client-side arrays */
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, verts);
     glEnableVertexAttribArray(0);
-    glBindTexture(GL_TEXTURE_2D, window->text_tex);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
