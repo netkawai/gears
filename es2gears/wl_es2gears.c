@@ -58,7 +58,7 @@
 #include "xdg-shell-protocol.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
-#include "stb_truetype.h"
+#include "../stb/stb_truetype.h"
 
 /* Ported math/rendering structures from es2gears.c */
 #define STRIPS_PER_TOOTH 7
