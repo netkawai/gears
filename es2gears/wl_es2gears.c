@@ -473,9 +473,14 @@ update_title_texture(struct window *window, const char *text)
     char *font_path = find_font("/usr/share/fonts");
     if (!font_path) return;
 
+    printf("Font found: %s\n", font_path);
+
     FILE *f = fopen(font_path, "rb");
+    if (!f) {
+        free(font_path);
+        return;
+    }
     free(font_path);
-    if (!f) return;
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -483,10 +488,36 @@ update_title_texture(struct window *window, const char *text)
     fread(font_buffer, 1, size, f);
     fclose(f);
 
+    stbtt_fontinfo info;
+    if (!stbtt_InitFont(&info, font_buffer, 0)) {
+        free(font_buffer);
+        return;
+    }
+
     int tex_w = 512, tex_h = 32;
     unsigned char *bitmap = calloc(tex_w * tex_h, 1);
-    stbtt_bakedchar cdata[96];
-    stbtt_BakeFontBitmap(font_buffer, 0, 16.0, bitmap, tex_w, tex_h, 32, 96, cdata);
+
+    float scale = stbtt_ScaleForPixelHeight(&info, 18);
+    int ascent, descent, lineGap;
+    stbtt_GetFontVMetrics(&info, &ascent, &descent, &lineGap);
+    int baseline = (int)(ascent * scale);
+
+    int x = 0;
+    for (int i = 0; text[i]; ++i) {
+        int advance, lsb, x0, y0, x1, y1;
+        stbtt_GetCodepointHMetrics(&info, text[i], &advance, &lsb);
+        stbtt_GetCodepointBitmapBox(&info, text[i], scale, scale, &x0, &y0, &x1, &y1);
+        int out_x = x + (int)(lsb * scale) + x0;
+        int out_y = baseline + y0;
+        if (out_x >= 0 && out_y >= 0 && out_x + (x1 - x0) < tex_w && out_y + (y1 - y0) < tex_h) {
+            stbtt_MakeCodepointBitmap(&info, bitmap + out_y * tex_w + out_x, x1 - x0, y1 - y0, tex_w, scale, scale, text[i]);
+        }
+        x += (int)(advance * scale);
+        if (text[i + 1])
+            x += (int)(scale * stbtt_GetCodepointKernAdvance(&info, text[i], text[i + 1]));
+    }
+    window->text_width = x;
+
     free(font_buffer);
 
     if (window->text_tex == 0) glGenTextures(1, &window->text_tex);
@@ -522,6 +553,8 @@ update_title_texture(struct window *window, const char *text)
         glAttachShader(window->text_prog, f);
         glBindAttribLocation(window->text_prog, 0, "p");
         glLinkProgram(window->text_prog);
+        glUseProgram(window->text_prog);
+        glUniform1i(glGetUniformLocation(window->text_prog, "s"), 0);
     }
 }
 
@@ -534,14 +567,13 @@ draw_text(struct window *window)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    float total_h = (float)(window->height + TITLE_BAR_HEIGHT);
-
-    float tw_ndc = (float)window->text_width / (float)window->width; 
-    float th_ndc = 16.0f / total_h; // Half-height in NDC units
+    /* Viewport is set to TITLE_BAR_HEIGHT in redraw(), so NDC -1 to 1 is the bar */
+    float tw_ndc = (float)window->text_width / (float)window->width;
     
-    float x1 = -tw_ndc, x2 = tw_ndc;
-    float y_center = (window->height + (float)TITLE_BAR_HEIGHT / 2.0f) / total_h * 2.0f - 1.0f;
-    float y1 = y_center + th_ndc, y2 = y_center - th_ndc;
+    float x1 = -tw_ndc;
+    float x2 = tw_ndc;
+    float y1 = 0.8f;  /* Margin from top/bottom of bar */
+    float y2 = -0.8f;
 
     float s_max = (float)window->text_width / 512.0f;
     float verts[] = { x1,y1,0,0, x2,y1,s_max,0, x1,y2,0,1, x2,y2,s_max,1 };
@@ -601,24 +633,20 @@ static void redraw(struct window *window) {
     const static GLfloat red[4] = { 0.8, 0.1, 0.0, 1.0 }, green[4] = { 0.0, 0.8, 0.2, 1.0 }, blue[4] = { 0.2, 0.2, 1.0, 1.0 };
     GLfloat transform[16]; identity(transform);
 
-    int total_h = window->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
-
-    glViewport(0, 0, window->width, total_h);
+    /* Clear the entire backbuffer */
     glClearColor(0.0, 0.0, 0.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    /* Draw a simple grey title bar if not fullscreen */
+    /* 1. Draw Title Bar background and text if not fullscreen */
     if (!fullscreen) {
-        glEnable(GL_SCISSOR_TEST);
-        glScissor(0, window->height, window->width, TITLE_BAR_HEIGHT);
-        glClearColor(0.3, 0.3, 0.3, 1.0);
+        glViewport(0, window->height, window->width, TITLE_BAR_HEIGHT);
+        glClearColor(0.4, 0.4, 0.4, 1.0); /* Gray background */
         glClear(GL_COLOR_BUFFER_BIT);
-        glDisable(GL_SCISSOR_TEST);
 
         draw_text(window);
     }
 
-    /* Set viewport to the content area below the title bar */
+    /* 2. Draw 3D Gears in the content area */
     glViewport(0, 0, window->width, window->height);
 
     translate(transform, 0, 0, -20);
