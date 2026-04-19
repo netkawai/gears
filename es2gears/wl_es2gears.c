@@ -47,6 +47,9 @@
 #include <math.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <limits.h>
+#include <sys/stat.h>
 #include <linux/input.h>
 
 #include <wayland-client.h>
