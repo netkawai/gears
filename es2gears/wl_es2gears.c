@@ -811,9 +811,23 @@ static void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_tople
     exit(0);
 }
 
+static void
+xdg_toplevel_handle_configure_bounds(void *data, struct xdg_toplevel *xdg_toplevel,
+                                     int32_t width, int32_t height)
+{
+}
+
+static void
+xdg_toplevel_handle_wm_capabilities(void *data, struct xdg_toplevel *xdg_toplevel,
+                                    struct wl_array *capabilities)
+{
+}
+
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
    xdg_toplevel_handle_configure,
-   xdg_toplevel_handle_close
+   xdg_toplevel_handle_close,
+   xdg_toplevel_handle_configure_bounds,
+   xdg_toplevel_handle_wm_capabilities
 };
 
 /**
