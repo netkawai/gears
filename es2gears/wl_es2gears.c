@@ -88,6 +88,7 @@ struct display {
     struct wl_registry *registry;
     struct wl_compositor *compositor;
     struct xdg_wm_base *xdg_wm_base;
+    struct wl_subcompositor *subcompositor;
     struct wl_seat *seat;
     struct wl_pointer *pointer;
     struct wl_keyboard *keyboard;
@@ -105,7 +106,11 @@ struct window {
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
     struct wl_egl_window *native;
+    struct wl_surface *title_surface;
+    struct wl_subsurface *subsurface;
+    struct wl_egl_window *title_native;
     EGLSurface egl_surface;
+    EGLSurface title_egl_surface;
     GLuint text_tex;
     GLuint text_prog;
     GLuint text_vbo;
@@ -513,10 +518,12 @@ update_title_texture(struct window *window, const char *text)
         if (out_x >= 0 && out_y >= 0 && out_x + (x1 - x0) < tex_w && out_y + (y1 - y0) < tex_h) {
             stbtt_MakeCodepointBitmap(&info, bitmap + out_y * tex_w + out_x, x1 - x0, y1 - y0, tex_w, scale, scale, text[i]);
         }
-        x += (int)(advance * scale);
+        int adv = (int)(advance * scale);
+        x += adv;
         if (text[i + 1])
             x += (int)(scale * stbtt_GetCodepointKernAdvance(&info, text[i], text[i + 1]));
     }
+    if (x == 0) x = 1; // Prevent div by zero
     window->text_width = x;
 
     free(font_buffer);
@@ -576,11 +583,11 @@ draw_text(struct window *window)
     
     float x1 = -tw_ndc;
     float x2 = tw_ndc;
-    float y1 = 0.8f;  /* Margin from top/bottom of bar */
-    float y2 = -0.8f;
+    float y1 = 0.6f;
+    float y2 = -0.6f;
 
     float s_max = (float)window->text_width / 512.0f;
-    float verts[] = { x1,y1,0,0, x2,y1,s_max,0, x1,y2,0,1, x2,y2,s_max,1 };
+    float verts[] = { x1,y1,0,1, x2,y1,s_max,1, x1,y2,0,0, x2,y2,s_max,0 };
 
     /* CRITICAL: Unbind any VBOs from gear drawing so we can use client-side arrays */
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -638,28 +645,21 @@ static void redraw(struct window *window) {
     const static GLfloat red[4] = { 0.8, 0.1, 0.0, 1.0 }, green[4] = { 0.0, 0.8, 0.2, 1.0 }, blue[4] = { 0.2, 0.2, 1.0, 1.0 };
     GLfloat transform[16]; identity(transform);
 
-    int total_h = window->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
-
-    /* Clear the entire backbuffer */
-    glViewport(0, 0, window->width, total_h);
-    glClearColor(0.0, 0.0, 0.0, 1.0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
     if (!fullscreen) {
-        /* 1. Draw Title Bar background using Scissor for efficiency */
-        glEnable(GL_SCISSOR_TEST);
-        glScissor(0, window->height, window->width, TITLE_BAR_HEIGHT);
-        glClearColor(0.4, 0.4, 0.4, 1.0); /* Gray background */
+        /* 1. Draw Title Bar Surface */
+        eglMakeCurrent(window->display->egl.dpy, window->title_egl_surface, window->title_egl_surface, window->display->egl.ctx);
+        glViewport(0, 0, window->width, TITLE_BAR_HEIGHT);
+        glClearColor(0.3, 0.3, 0.3, 1.0);
         glClear(GL_COLOR_BUFFER_BIT);
-        glDisable(GL_SCISSOR_TEST);
-
-        /* 2. Draw centered text */
-        glViewport(0, window->height, window->width, TITLE_BAR_HEIGHT);
         draw_text(window);
+        eglSwapBuffers(window->display->egl.dpy, window->title_egl_surface);
     }
 
-    /* 3. Draw 3D Gears in the content area */
+    /* 2. Draw 3D Gears on Main Surface */
+    eglMakeCurrent(window->display->egl.dpy, window->egl_surface, window->egl_surface, window->display->egl.ctx);
     glViewport(0, 0, window->width, window->height);
+    glClearColor(0,0,0,1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(gears_prog);
 
     translate(transform, 0, 0, -20);
@@ -936,6 +936,9 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, co
     if (strcmp(interface, "wl_compositor") == 0)  {
         d->compositor = wl_registry_bind(registry, id, &wl_compositor_interface, 1); 
     }
+    else if (strcmp(interface, "wl_subcompositor") == 0) {
+        d->subcompositor = wl_registry_bind(registry, id, &wl_subcompositor_interface, 1);
+    }
     else if (strcmp(interface, "xdg_wm_base") == 0) {
         uint32_t use_version = (version >= 6) ? 6 : 1;
         d->xdg_wm_base = wl_registry_bind(registry, id, &xdg_wm_base_interface, use_version);
@@ -1000,10 +1003,28 @@ create_window(struct window *window)
     const char *title = "Wayland EGL Gears";
     xdg_toplevel_set_title(window->xdg_toplevel, title);
     if (fullscreen) xdg_toplevel_set_fullscreen(window->xdg_toplevel, NULL);
+
+    /* Title Subsurface */
+    window->title_surface = wl_compositor_create_surface(window->display->compositor);
+    window->subsurface = wl_subcompositor_get_subsurface(window->display->subcompositor, window->title_surface, window->surface);
+    wl_subsurface_set_position(window->subsurface, 0, 0);
+    wl_subsurface_set_desync(window->subsurface);
+
+    /* Resize parent to include title bar area, but gears draw at an offset? 
+       Actually simpler: parent is Gears, Child is Title. 
+       Let's place Title at 0,0 and Gears at 0, TITLE_BAR_HEIGHT */
+    wl_subsurface_set_position(window->subsurface, 0, 0);
+
     wl_surface_commit(window->surface);
 
     window->native = wl_egl_window_create(window->surface, window->width, window->height);
     window->egl_surface = eglCreateWindowSurface(window->display->egl.dpy, window->display->egl.conf, (EGLNativeWindowType)window->native, NULL);
+
+    window->title_native = wl_egl_window_create(window->title_surface, window->width, TITLE_BAR_HEIGHT);
+    window->title_egl_surface = eglCreateWindowSurface(window->display->egl.dpy, window->display->egl.conf, (EGLNativeWindowType)window->title_native, NULL);
+
+    /* We need to adjust window geometry to account for the subsurface position if it's outside parent,
+       but here we'll just put gears at Y=TITLE_BAR_HEIGHT in next resize */
     eglMakeCurrent(window->display->egl.dpy, window->egl_surface, window->egl_surface, window->display->egl.ctx);
     update_title_texture(window, title);
 }
