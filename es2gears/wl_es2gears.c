@@ -119,6 +119,7 @@ struct window {
 /** The view rotation [x, y, z] */
 static GLfloat view_rot[3] = { 20.0, 30.0, 0.0 };
 static int fullscreen = 0;
+static GLuint gears_prog;
 static int print_info = 0;
 /** The gears */
 static struct gear *gear1, *gear2, *gear3;
@@ -633,21 +634,29 @@ static void redraw(struct window *window) {
     const static GLfloat red[4] = { 0.8, 0.1, 0.0, 1.0 }, green[4] = { 0.0, 0.8, 0.2, 1.0 }, blue[4] = { 0.2, 0.2, 1.0, 1.0 };
     GLfloat transform[16]; identity(transform);
 
+    int total_h = window->height + (fullscreen ? 0 : TITLE_BAR_HEIGHT);
+
     /* Clear the entire backbuffer */
+    glViewport(0, 0, window->width, total_h);
     glClearColor(0.0, 0.0, 0.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    /* 1. Draw Title Bar background and text if not fullscreen */
     if (!fullscreen) {
-        glViewport(0, window->height, window->width, TITLE_BAR_HEIGHT);
+        /* 1. Draw Title Bar background using Scissor for efficiency */
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, window->height, window->width, TITLE_BAR_HEIGHT);
         glClearColor(0.4, 0.4, 0.4, 1.0); /* Gray background */
         glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
 
+        /* 2. Draw centered text */
+        glViewport(0, window->height, window->width, TITLE_BAR_HEIGHT);
         draw_text(window);
     }
 
-    /* 2. Draw 3D Gears in the content area */
+    /* 3. Draw 3D Gears in the content area */
     glViewport(0, 0, window->width, window->height);
+    glUseProgram(gears_prog);
 
     translate(transform, 0, 0, -20);
     rotate(transform, 2 * M_PI * view_rot[0] / 360.0, 1, 0, 0);
@@ -1048,7 +1057,7 @@ init_gl()
     glShaderSource(f, 1, &fragment_shader, NULL);
     glCompileShader(f);
 
-    GLuint prog = glCreateProgram();
+    GLuint prog = glCreateProgram(); gears_prog = prog;
     glAttachShader(prog, v);
     glAttachShader(prog, f);
     glBindAttribLocation(prog, 0, "position");
