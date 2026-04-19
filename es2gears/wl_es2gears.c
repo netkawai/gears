@@ -514,14 +514,19 @@ keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard,
 }
 
 static void
-keyboard_handle_enter(void *data, struct wl_keyboard *keyboard,
-                      uint32_t serial, struct wl_surface *surface,
-                      struct wl_array *keys) {}
+pointer_handle_enter(void *data, struct wl_pointer *pointer, uint32_t serial,
+                    struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy)
+ {
+    struct display *d = data;
+    if (d->window) {
+        d->window->pointer_x = wl_fixed_to_double(sx);
+        d->window->pointer_y = wl_fixed_to_double(sy);
+    }
+ }
 
 static void
-keyboard_handle_leave(void *data, struct wl_keyboard *keyboard,
-                      uint32_t serial, struct wl_surface *surface) {}
-
+pointer_handle_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
+                    struct wl_surface *surface) {}
 static void
 keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
                     uint32_t serial, uint32_t time, uint32_t key,
