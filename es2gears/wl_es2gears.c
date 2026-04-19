@@ -483,7 +483,7 @@ update_title_texture(struct window *window, const char *text)
     int tex_w = 512, tex_h = 32;
     unsigned char *bitmap = calloc(tex_w * tex_h, 1);
     stbtt_bakedchar cdata[96];
-    stbtt_BakeFontBitmap(font_buffer, 0, 20.0, bitmap, tex_w, tex_h, 32, 96, cdata);
+    stbtt_BakeFontBitmap(font_buffer, 0, 16.0, bitmap, tex_w, tex_h, 32, 96, cdata);
     free(font_buffer);
 
     if (window->text_tex == 0) glGenTextures(1, &window->text_tex);
@@ -527,14 +527,15 @@ draw_text(struct window *window)
 {
     if (!window->text_tex) return;
     glUseProgram(window->text_prog);
+    glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MIN_SOURCE_ALPHA);
 
-    /* Map 0..width to -1..1 */
-    float x1 = -0.95f; 
-    float y1 = 1.0f - (2.0f * (TITLE_BAR_HEIGHT - 5) / (window->height + TITLE_BAR_HEIGHT));
-    float x2 = 0.5f;
-    float y2 = 1.0f - (2.0f * 5 / (window->height + TITLE_BAR_HEIGHT));
+    float total_h = (float)(window->height + TITLE_BAR_HEIGHT);
+    float x1 = -0.98f; 
+    float y1 = 1.0f - (2.0f * 5.0f / total_h);
+    float x2 = 0.8f;
+    float y2 = 1.0f - (2.0f * (float)(TITLE_BAR_HEIGHT - 5) / total_h);
 
     float verts[] = { x1,y1,0,1, x2,y1,1,1, x1,y2,0,0, x2,y2,1,0 };
     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, verts);
@@ -542,6 +543,7 @@ draw_text(struct window *window)
     glBindTexture(GL_TEXTURE_2D, window->text_tex);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
 }
 
 /**
