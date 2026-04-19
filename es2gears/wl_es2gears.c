@@ -531,7 +531,7 @@ draw_text(struct window *window)
     glUseProgram(window->text_prog);
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MIN_SOURCE_ALPHA);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     float total_h = (float)(window->height + TITLE_BAR_HEIGHT);
     float x1 = -0.98f; 
